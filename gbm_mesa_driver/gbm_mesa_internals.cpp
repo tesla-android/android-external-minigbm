@@ -40,7 +40,6 @@ extern "C" {
 #include <string.h>
 #include <string>
 #include <sys/mman.h>
-#include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -62,7 +61,7 @@ void gbm_mesa_resolve_format_and_use_flags(struct driver *drv, uint32_t format, 
 		if (use_flags & (BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE)) {
 			*out_format = DRM_FORMAT_NV12;
 		} else {
-			/*HACK: See b/28671744 */
+			/* RPI4 Screen recording and scrcpy: */
 			*out_format = DRM_FORMAT_XBGR8888;
 		}
 		break;
@@ -359,6 +358,13 @@ int gbm_mesa_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint32_t 
 		.use_scanout = (use_flags & BO_USE_SCANOUT) != 0,
 	};
 
+	if (use_flags & BO_USE_SCANOUT) {
+		alloc_args.width = ALIGN(alloc_args.width, 32);
+	}
+
+		scanout_strong = true;
+		alloc_args.use_scanout = true;
+
 	/* Alignment for RPI4 CSI camera. Since we do not care about other cameras, keep this
 	 * globally for now.
 	 * TODO: Create/use constraints table for camera/codecs */
@@ -366,7 +372,23 @@ int gbm_mesa_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint32_t 
 		scanout_strong = true;
 		alloc_args.use_scanout = true;
 		alloc_args.width = ALIGN(alloc_args.width, 32);
+		size_align = (ALIGN(width, 32) * ALIGN(height, 16) * 3) >> 1;
+	}
+
+	/* RPI4 hwcodecs */
+	if (use_flags & (BO_USE_HW_VIDEO_DECODER | BO_USE_HW_VIDEO_ENCODER)) {
+		scanout_strong = true;
+		alloc_args.use_scanout = true;
+		alloc_args.width = ALIGN(alloc_args.width, 32);
+		if (alloc_args.height > 1)
+			alloc_args.height = ALIGN(alloc_args.height, 16);
 		size_align = 4096;
+	}
+
+	/* Allocate blobs in CMA */
+	if (format == DRM_FORMAT_R8) {
+		scanout_strong = true;
+		alloc_args.use_scanout = true;
 	}
 
 	if (alloc_args.drm_format == 0) {
